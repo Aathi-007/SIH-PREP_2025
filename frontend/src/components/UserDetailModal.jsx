@@ -10,7 +10,8 @@ import {
   Download, Clock, Laptop, Globe, AlertTriangle 
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || 'dev-local-key';
 
 export default function UserDetailModal({ userId, onClose }) {
   const [data, setData] = useState(null);
@@ -25,7 +26,9 @@ export default function UserDetailModal({ userId, onClose }) {
 
     async function fetchUserData() {
       try {
-        const response = await fetch(`${API_BASE}/user/${userId}`);
+        const response = await fetch(`${API_BASE}/user/${userId}`, {
+          headers: { 'X-API-Key': API_KEY }
+        });
         if (!response.ok) {
           throw new Error(`Server returned status ${response.status}`);
         }

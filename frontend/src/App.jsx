@@ -7,7 +7,8 @@ import UserDetailModal from './components/UserDetailModal';
 import RiskTrendChart from './components/RiskTrendChart';
 import ActivityTimeline from './components/ActivityTimeline';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || 'dev-local-key';
 
 export default function App() {
   const [alerts, setAlerts] = useState([]);
@@ -24,7 +25,9 @@ export default function App() {
 
     async function fetchAlerts() {
       try {
-        const response = await fetch(`${API_BASE}/alerts`);
+        const response = await fetch(`${API_BASE}/alerts`, {
+          headers: { 'X-API-Key': API_KEY }
+        });
         if (!response.ok) {
           throw new Error(`Server returned status ${response.status}`);
         }

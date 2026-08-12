@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AlertTriangle, ShieldAlert, ShieldQuestion, Users, AlertCircle } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || 'dev-local-key';
 
 // Custom CountUp Component for premium numeric ticker animation
 function CountUp({ value }) {
@@ -53,7 +54,9 @@ export default function SummaryCards({ onFetchError }) {
 
     async function fetchSummary() {
       try {
-        const response = await fetch(`${API_BASE}/alerts/summary`);
+        const response = await fetch(`${API_BASE}/alerts/summary`, {
+          headers: { 'X-API-Key': API_KEY }
+        });
         if (!response.ok) {
           throw new Error(`Server returned status ${response.status}`);
         }
