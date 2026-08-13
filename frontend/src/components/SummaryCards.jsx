@@ -44,8 +44,12 @@ function CountUp({ value }) {
   return <span>{count}</span>;
 }
 
-export default function SummaryCards({ onFetchError }) {
-  const [summary, setSummary] = useState(null);
+export default function SummaryCards({ onFetchError, jwt }) {
+  const [summary, setSummary] = useState({
+    total_alerts: 0,
+    high_risk_count: 0,
+    medium_risk_count: 0
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -53,9 +57,13 @@ export default function SummaryCards({ onFetchError }) {
     let isMounted = true;
 
     async function fetchSummary() {
+      if (!jwt) return;
       try {
         const response = await fetch(`${API_BASE}/alerts/summary`, {
-          headers: { 'X-API-Key': API_KEY }
+          headers: { 
+            'X-API-Key': API_KEY,
+            'Authorization': `Bearer ${jwt}`
+          }
         });
         if (!response.ok) {
           throw new Error(`Server returned status ${response.status}`);
@@ -89,7 +97,7 @@ export default function SummaryCards({ onFetchError }) {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [onFetchError]);
+  }, [onFetchError, jwt]);
 
   if (loading && !summary) {
     return (
