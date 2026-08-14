@@ -60,21 +60,32 @@ for i in range(15 * 60): # 15 minutes of seconds
     if random.random() > 0.3: # 70% chance of a GET request each second
         api_traffic_log.append({
             "timestamp": now_ts - i,
-            "method": "GET"
+            "method": "GET",
+            "is_abnormal": random.random() < 0.02
         })
     if random.random() > 0.95: # 5% chance of a POST request each second
         api_traffic_log.append({
             "timestamp": now_ts - i,
-            "method": "POST"
+            "method": "POST",
+            "is_abnormal": random.random() < 0.15
         })
 
 @app.middleware("http")
 async def track_api_traffic(request: Request, call_next):
-    api_traffic_log.append({
-        "timestamp": time.time(),
-        "method": request.method
-    })
-    return await call_next(request)
+    # Initialize state
+    request.state.is_abnormal = False
+    
+    response = await call_next(request)
+    
+    is_abnormal = getattr(request.state, "is_abnormal", False) or response.status_code >= 400
+    
+    if request.method in ("GET", "POST"):
+        api_traffic_log.append({
+            "timestamp": time.time(),
+            "method": request.method,
+            "is_abnormal": is_abnormal
+        })
+    return response
 
 API_KEY = os.environ.get("UEBA_API_KEY", "dev-local-key")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -103,8 +114,39 @@ class AccessRequest(BaseModel):
     department: str = "Engineering"
     username: str = "test.user"
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+@app.post("/login")
+def login(request: LoginRequest):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, username, password_hash, role, department FROM users WHERE username = ?", 
+            (request.username.strip(),)
+        )
+        user = cursor.fetchone()
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        
+        user_id, username, password_hash, role, department = user
+        if not verify_password(request.password, password_hash):
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+            
+        token = create_access_token(data={
+            "sub": username, 
+            "user_id": user_id, 
+            "role": role, 
+            "department": department
+        })
+        return {"access_token": token, "token_type": "bearer"}
+    finally:
+        conn.close()
+
 @app.post("/access-request")
-def access_request(request: AccessRequest, api_key: str = Depends(get_api_key)):
+def access_request(request: AccessRequest, http_request: Request, api_key: str = Depends(get_api_key)):
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -164,6 +206,7 @@ def access_request(request: AccessRequest, api_key: str = Depends(get_api_key)):
                 new_event_id, user_id, 90, "unauthorized_cross_department_access", timestamp, False
             ))
             
+            http_request.state.is_abnormal = True
             conn.commit()
             return JSONResponse(status_code=403, content={"allowed": False})
             
@@ -262,24 +305,40 @@ def get_company_behavior_trend(api_key: str = Depends(get_api_key)):
     buckets = {}
     for i in range(15):
         t = now - timedelta(minutes=i)
-        buckets[t.strftime("%H:%M")] = {"normal_events": 0, "abnormal_events": 0}
+        buckets[t.strftime("%H:%M")] = {
+            "get_normal": 0,
+            "get_abnormal": 0,
+            "post_normal": 0,
+            "post_abnormal": 0
+        }
         
     for log in api_traffic_log:
         log_time = datetime.fromtimestamp(log["timestamp"])
         time_key = log_time.strftime("%H:%M")
         if time_key in buckets:
-            if log["method"] == "GET":
-                buckets[time_key]["normal_events"] += 1
-            elif log["method"] == "POST":
-                buckets[time_key]["abnormal_events"] += 1
+            method = log["method"]
+            is_abnormal = log.get("is_abnormal", False)
+            
+            if method == "GET":
+                if is_abnormal:
+                    buckets[time_key]["get_abnormal"] += 1
+                else:
+                    buckets[time_key]["get_normal"] += 1
+            elif method == "POST":
+                if is_abnormal:
+                    buckets[time_key]["post_abnormal"] += 1
+                else:
+                    buckets[time_key]["post_normal"] += 1
                 
     # Format and sort results
     res = []
     for k in sorted(buckets.keys()):
         res.append({
             "displayDate": k,
-            "normal_events": buckets[k]["normal_events"],
-            "abnormal_events": buckets[k]["abnormal_events"]
+            "get_normal": buckets[k]["get_normal"],
+            "get_abnormal": buckets[k]["get_abnormal"],
+            "post_normal": buckets[k]["post_normal"],
+            "post_abnormal": buckets[k]["post_abnormal"]
         })
     return res
 
@@ -341,7 +400,7 @@ def review_alert(risk_event_id: int, api_key: str = Depends(get_api_key)):
         conn.close()
 
 @app.post("/simulate-event")
-def simulate_event(event: EventSimulation, api_key: str = Depends(get_api_key)):
+def simulate_event(event: EventSimulation, http_request: Request, api_key: str = Depends(get_api_key)):
     if model is None or encoders is None:
         raise HTTPException(status_code=500, detail="Model or encoders not loaded properly.")
         
@@ -416,6 +475,7 @@ def simulate_event(event: EventSimulation, api_key: str = Depends(get_api_key)):
             cursor.execute(insert_risk_sql, (
                 new_event_id, event_dict['user_id'], final_score, ",".join(reasons), datetime.now().isoformat(), False
             ))
+            http_request.state.is_abnormal = True
             
         conn.commit()
         

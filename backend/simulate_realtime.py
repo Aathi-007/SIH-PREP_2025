@@ -133,7 +133,7 @@ def run_simulation():
             print(f"Error: Server responded with status {health.status_code}")
             return
     except requests.exceptions.ConnectionError:
-        print("❌ ERROR: Could not connect to the server.")
+        print("[ERROR]: Could not connect to the server.")
         print("Please ensure main.py is running in a separate terminal before starting this simulation.")
         print("Run: uvicorn main:app --host 0.0.0.0 --port 8000 --reload")
         return
@@ -143,7 +143,7 @@ def run_simulation():
     high_risk_flagged = 0
 
     print("=" * 60)
-    print("🚀 STARTING REAL-TIME SIMULATION...")
+    print("[STARTING] REAL-TIME SIMULATION...")
     print("=" * 60)
     print(f"Sending {len(events)} events to the UEBA engine...\n")
 
@@ -163,13 +163,13 @@ def run_simulation():
                 if score > 60:
                     high_risk_flagged += 1
                     reasons_str = ", ".join(reasons)
-                    print(f"   🚨 HIGH RISK DETECTED! Score: {score}, Reasons: {reasons_str}")
+                    print(f"   [ALERT] HIGH RISK DETECTED! Score: {score}, Reasons: {reasons_str}")
                 else:
-                    print(f"   ✅ Normal activity. Score: {score}")
+                    print(f"   [OK] Normal activity. Score: {score}")
             else:
-                print(f"   ❌ Failed to process event. Server responded with {res.status_code}: {res.text}")
+                print(f"   [ERROR] Failed to process event. Server responded with {res.status_code}: {res.text}")
         except Exception as e:
-            print(f"   ❌ Error sending event: {e}")
+            print(f"   [ERROR] Error sending event: {e}")
             
         total_sent += 1
         
@@ -178,7 +178,7 @@ def run_simulation():
             time.sleep(3)
             
     print("\n" + "=" * 60)
-    print("🏁 SIMULATION COMPLETE")
+    print("[COMPLETE] SIMULATION COMPLETE")
     print("=" * 60)
     print(f"Total events sent: {total_sent}")
     print(f"High risk events flagged: {high_risk_flagged}")
