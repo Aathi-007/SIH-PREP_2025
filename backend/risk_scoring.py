@@ -141,13 +141,14 @@ def evaluate_risk_scoring():
             
         anomaly_event_ids = tuple(df_anomalies['event_id'].tolist())
         
-        if len(anomaly_event_ids) == 1:
-            query = f"SELECT COUNT(*) FROM risk_events WHERE risk_score > 60 AND event_id = {anomaly_event_ids[0]}"
-        else:
-            query = f"SELECT COUNT(*) FROM risk_events WHERE risk_score > 60 AND event_id IN {anomaly_event_ids}"
-            
         cursor = conn.cursor()
-        cursor.execute(query)
+        if len(anomaly_event_ids) == 1:
+            query = "SELECT COUNT(*) FROM risk_events WHERE risk_score > 60 AND event_id = ?"
+            cursor.execute(query, (anomaly_event_ids[0],))
+        else:
+            placeholders = ','.join(['?'] * len(anomaly_event_ids))
+            query = f"SELECT COUNT(*) FROM risk_events WHERE risk_score > 60 AND event_id IN ({placeholders})"
+            cursor.execute(query, anomaly_event_ids)
         num_flagged = cursor.fetchone()[0]
         
         percentage = (num_flagged / total_anomalies) * 100

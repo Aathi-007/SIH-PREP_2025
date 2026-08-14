@@ -25,6 +25,41 @@ def create_tables(conn):
     """
     cursor = conn.cursor()
     
+    # Table: users
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        user_id TEXT PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        department TEXT,
+        role TEXT DEFAULT 'employee'
+    )
+    ''')
+
+    # Table: resources
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS resources (
+        resource_id TEXT PRIMARY KEY,
+        resource_name TEXT NOT NULL,
+        owning_department TEXT,
+        sensitivity TEXT
+    )
+    ''')
+
+    # Table: access_violations
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS access_violations (
+        violation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT,
+        resource_id TEXT,
+        requester_department TEXT,
+        resource_department TEXT,
+        attempted_at TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(user_id),
+        FOREIGN KEY (resource_id) REFERENCES resources(resource_id)
+    )
+    ''')
+
     # Table 1: activity_logs
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS activity_logs (
@@ -93,8 +128,10 @@ def load_csv_to_db(conn):
     cursor = conn.cursor()
     
     # Duplicate-run safety: Clear the table and reset the autoincrement sequence
+    cursor.execute("DELETE FROM risk_events")
     cursor.execute("DELETE FROM activity_logs")
     cursor.execute("DELETE FROM sqlite_sequence WHERE name='activity_logs'")
+    cursor.execute("DELETE FROM sqlite_sequence WHERE name='risk_events'")
     conn.commit()
 
     # Read CSV using pandas
@@ -141,10 +178,10 @@ def main():
         print("="*40)
         
         cursor = conn.cursor()
-        tables = ['activity_logs', 'user_baselines', 'risk_events']
+        tables = ['users', 'resources', 'access_violations', 'activity_logs', 'user_baselines', 'risk_events']
         
         for table in tables:
-            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
             exists = cursor.fetchone() is not None
             
             if exists:

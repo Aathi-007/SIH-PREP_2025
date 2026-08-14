@@ -1,8 +1,11 @@
 import requests
 import json
 from datetime import datetime
+import os
 
 BASE_URL = "http://localhost:8000"
+API_KEY = os.environ.get("UEBA_API_KEY", "dev-local-key")
+HEADERS = {"X-API-Key": API_KEY}
 
 def print_section(title):
     print(f"\n{'='*50}")
@@ -26,7 +29,7 @@ def main():
 
     print_section("2. Testing GET /alerts")
     try:
-        res = requests.get(f"{BASE_URL}/alerts")
+        res = requests.get(f"{BASE_URL}/alerts", headers=HEADERS)
         if res.status_code == 200:
             alerts = res.json()
             print(f"Status Code: 200")
@@ -39,14 +42,14 @@ def main():
 
     print_section("3. Testing GET /alerts/summary")
     try:
-        res = requests.get(f"{BASE_URL}/alerts/summary")
+        res = requests.get(f"{BASE_URL}/alerts/summary", headers=HEADERS)
         print_response(res)
     except Exception as e:
         print(f"Error: {e}")
 
     print_section("4. Testing GET /user/U001")
     try:
-        res = requests.get(f"{BASE_URL}/user/U001")
+        res = requests.get(f"{BASE_URL}/user/U001", headers=HEADERS)
         if res.status_code == 200:
             data = res.json()
             print(f"Status Code: 200")
@@ -74,7 +77,7 @@ def main():
     }
     try:
         print(f"Sending payload:\n{json.dumps(payload, indent=2)}")
-        res = requests.post(f"{BASE_URL}/simulate-event", json=payload)
+        res = requests.post(f"{BASE_URL}/simulate-event", json=payload, headers=HEADERS)
         print("\nResponse:")
         print_response(res)
     except Exception as e:

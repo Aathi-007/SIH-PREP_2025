@@ -3,8 +3,13 @@ import sqlite3
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from collections import deque
+import time
+from fastapi import FastAPI, HTTPException, Security, Depends, Request
+from fastapi.security.api_key import APIKeyHeader
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List
 import joblib
@@ -13,6 +18,7 @@ import uvicorn
 
 from database import get_connection
 from risk_scoring import calculate_rule_based_score, calculate_final_risk_score
+from auth import verify_password, create_access_token, verify_token
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
@@ -30,13 +36,55 @@ except Exception as e:
 
 app = FastAPI(title="UEBA API", description="User Entity Behavior Analytics API")
 
+cors_origins_str = os.environ.get("CORS_ORIGINS")
+if cors_origins_str:
+    cors_origins = [origin.strip() for origin in cors_origins_str.split(",")]
+else:
+    cors_origins = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Store the last 1000 requests to track real-time traffic
+api_traffic_log = deque(maxlen=2000)
+
+# Pre-seed with some dummy background noise for the last 15 minutes
+import random
+now_ts = time.time()
+for i in range(15 * 60): # 15 minutes of seconds
+    if random.random() > 0.3: # 70% chance of a GET request each second
+        api_traffic_log.append({
+            "timestamp": now_ts - i,
+            "method": "GET"
+        })
+    if random.random() > 0.95: # 5% chance of a POST request each second
+        api_traffic_log.append({
+            "timestamp": now_ts - i,
+            "method": "POST"
+        })
+
+@app.middleware("http")
+async def track_api_traffic(request: Request, call_next):
+    api_traffic_log.append({
+        "timestamp": time.time(),
+        "method": request.method
+    })
+    return await call_next(request)
+
+API_KEY = os.environ.get("UEBA_API_KEY", "dev-local-key")
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+security = HTTPBearer()
+
+async def get_api_key(api_key: str = Security(api_key_header)):
+    if api_key == API_KEY:
+        return api_key
+    raise HTTPException(status_code=401, detail="Invalid or missing API Key")
+
 
 class EventSimulation(BaseModel):
     user_id: str
@@ -49,6 +97,79 @@ class EventSimulation(BaseModel):
     files_accessed: int
     accessed_department: str
 
+class AccessRequest(BaseModel):
+    resource_id: str
+    user_id: str = "U001"
+    department: str = "Engineering"
+    username: str = "test.user"
+
+@app.post("/access-request")
+def access_request(request: AccessRequest, api_key: str = Depends(get_api_key)):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Check if resource exists
+        cursor.execute("SELECT owning_department FROM resources WHERE resource_id = ?", (request.resource_id,))
+        resource = cursor.fetchone()
+        if not resource:
+            raise HTTPException(status_code=404, detail="Resource not found")
+            
+        resource_dept = resource[0]
+        user_dept = request.department
+        user_id = request.user_id
+        user_name = request.username
+        timestamp = datetime.now().isoformat()
+        
+        if resource_dept == user_dept:
+            # Allow access and log normal activity
+            cursor.execute('''
+                INSERT INTO activity_logs (
+                    user_id, user_name, department, timestamp, login_hour, 
+                    location, ip_address, device_id, download_mb, files_accessed, 
+                    accessed_department, is_anomaly
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id, user_name, user_dept, timestamp, datetime.now().hour,
+                "Unknown", "0.0.0.0", "Unknown", 0.0, 1, resource_dept, False
+            ))
+            conn.commit()
+            return {"allowed": True}
+        else:
+            # Deny access: 1. log activity as anomaly
+            cursor.execute('''
+                INSERT INTO activity_logs (
+                    user_id, user_name, department, timestamp, login_hour, 
+                    location, ip_address, device_id, download_mb, files_accessed, 
+                    accessed_department, is_anomaly
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id, user_name, user_dept, timestamp, datetime.now().hour,
+                "Unknown", "0.0.0.0", "Unknown", 0.0, 1, resource_dept, True
+            ))
+            new_event_id = cursor.lastrowid
+            
+            # 2. Log access violation
+            cursor.execute('''
+                INSERT INTO access_violations (
+                    user_id, resource_id, requester_department, resource_department, attempted_at
+                ) VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, request.resource_id, user_dept, resource_dept, timestamp))
+            
+            # 3. Create risk event
+            cursor.execute('''
+                INSERT INTO risk_events (event_id, user_id, risk_score, reasons, flagged_at, reviewed)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                new_event_id, user_id, 90, "unauthorized_cross_department_access", timestamp, False
+            ))
+            
+            conn.commit()
+            return JSONResponse(status_code=403, content={"allowed": False})
+            
+    finally:
+        conn.close()
+
 @app.get("/")
 def read_root():
     return {
@@ -59,6 +180,8 @@ def read_root():
             "GET /user/{user_id}",
             "PATCH /alerts/{risk_event_id}/review",
             "POST /simulate-event",
+            "POST /login",
+            "POST /access-request",
             "GET /health"
         ]
     }
@@ -68,7 +191,7 @@ def health_check():
     return {"status": "ok"}
 
 @app.get("/alerts")
-def get_alerts():
+def get_alerts(api_key: str = Depends(get_api_key)):
     conn = get_connection()
     try:
         query = """
@@ -97,7 +220,7 @@ def get_alerts():
         conn.close()
 
 @app.get("/alerts/summary")
-def get_alerts_summary():
+def get_alerts_summary(api_key: str = Depends(get_api_key)):
     conn = get_connection()
     try:
         df = pd.read_sql_query("SELECT risk_score FROM risk_events", conn)
@@ -114,19 +237,81 @@ def get_alerts_summary():
     finally:
         conn.close()
 
-@app.get("/user/{user_id}")
-def get_user_data(user_id: str):
+@app.get("/analytics/daily-risk")
+def get_daily_risk(api_key: str = Depends(get_api_key)):
     conn = get_connection()
     try:
-        df_base = pd.read_sql_query(f"SELECT * FROM user_baselines WHERE user_id = '{user_id}'", conn)
+        # Get the average risk score per user per day for the last 30 days
+        query = """
+        SELECT r.user_id, u.username as user_name, date(r.flagged_at) as date, AVG(r.risk_score) as avg_score
+        FROM risk_events r
+        JOIN users u ON r.user_id = u.user_id
+        WHERE date(r.flagged_at) >= date('now', '-30 days')
+        GROUP BY r.user_id, date(r.flagged_at)
+        """
+        df = pd.read_sql_query(query, conn)
+        return df.to_dict(orient="records")
+    finally:
+        conn.close()
+@app.get("/analytics/company-behavior-trend")
+def get_company_behavior_trend(api_key: str = Depends(get_api_key)):
+    from datetime import timedelta
+    now = datetime.now()
+    
+    # Create buckets for the last 15 minutes, minute by minute
+    buckets = {}
+    for i in range(15):
+        t = now - timedelta(minutes=i)
+        buckets[t.strftime("%H:%M")] = {"normal_events": 0, "abnormal_events": 0}
+        
+    for log in api_traffic_log:
+        log_time = datetime.fromtimestamp(log["timestamp"])
+        time_key = log_time.strftime("%H:%M")
+        if time_key in buckets:
+            if log["method"] == "GET":
+                buckets[time_key]["normal_events"] += 1
+            elif log["method"] == "POST":
+                buckets[time_key]["abnormal_events"] += 1
+                
+    # Format and sort results
+    res = []
+    for k in sorted(buckets.keys()):
+        res.append({
+            "displayDate": k,
+            "normal_events": buckets[k]["normal_events"],
+            "abnormal_events": buckets[k]["abnormal_events"]
+        })
+    return res
+
+@app.get("/users")
+def get_users(api_key: str = Depends(get_api_key)):
+    conn = get_connection()
+    try:
+        query = """
+        SELECT u.user_id, u.username, u.department, COALESCE(MAX(r.risk_score), 0) as max_risk
+        FROM users u
+        LEFT JOIN risk_events r ON u.user_id = r.user_id AND r.flagged_at >= date('now', '-7 days')
+        GROUP BY u.user_id
+        ORDER BY max_risk DESC, u.username ASC
+        """
+        df = pd.read_sql_query(query, conn)
+        return df.to_dict(orient="records")
+    finally:
+        conn.close()
+
+@app.get("/user/{user_id}")
+def get_user_data(user_id: str, api_key: str = Depends(get_api_key)):
+    conn = get_connection()
+    try:
+        df_base = pd.read_sql_query("SELECT * FROM user_baselines WHERE user_id = ?", conn, params=(user_id,))
         if df_base.empty:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found in baselines.")
         baseline = df_base.iloc[0].to_dict()
         
-        df_activity = pd.read_sql_query(f"SELECT * FROM activity_logs WHERE user_id = '{user_id}' ORDER BY timestamp DESC LIMIT 100", conn)
+        df_activity = pd.read_sql_query("SELECT * FROM activity_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT 100", conn, params=(user_id,))
         activity_history = df_activity.to_dict(orient='records')
         
-        df_risk = pd.read_sql_query(f"SELECT * FROM risk_events WHERE user_id = '{user_id}' ORDER BY risk_score DESC", conn)
+        df_risk = pd.read_sql_query("SELECT * FROM risk_events WHERE user_id = ? ORDER BY risk_score DESC", conn, params=(user_id,))
         risk_history = []
         for _, row in df_risk.iterrows():
             r_dict = row.to_dict()
@@ -143,11 +328,11 @@ def get_user_data(user_id: str):
         conn.close()
 
 @app.patch("/alerts/{risk_event_id}/review")
-def review_alert(risk_event_id: int):
+def review_alert(risk_event_id: int, api_key: str = Depends(get_api_key)):
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute(f"UPDATE risk_events SET reviewed = 1 WHERE risk_event_id = {risk_event_id}")
+        cursor.execute("UPDATE risk_events SET reviewed = 1 WHERE risk_event_id = ?", (risk_event_id,))
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Risk event not found.")
         conn.commit()
@@ -156,20 +341,20 @@ def review_alert(risk_event_id: int):
         conn.close()
 
 @app.post("/simulate-event")
-def simulate_event(event: EventSimulation):
+def simulate_event(event: EventSimulation, api_key: str = Depends(get_api_key)):
     if model is None or encoders is None:
         raise HTTPException(status_code=500, detail="Model or encoders not loaded properly.")
         
     conn = get_connection()
     try:
-        df_base = pd.read_sql_query(f"SELECT * FROM user_baselines WHERE user_id = '{event.user_id}'", conn)
+        df_base = pd.read_sql_query("SELECT * FROM user_baselines WHERE user_id = ?", conn, params=(event.user_id,))
         if df_base.empty:
             raise HTTPException(status_code=404, detail=f"Baseline not found for user {event.user_id}")
         baseline = df_base.iloc[0].to_dict()
         
         event_dict = event.model_dump()
         
-        df_user = pd.read_sql_query(f"SELECT user_name, department FROM activity_logs WHERE user_id = '{event.user_id}' LIMIT 1", conn)
+        df_user = pd.read_sql_query("SELECT user_name, department FROM activity_logs WHERE user_id = ? LIMIT 1", conn, params=(event.user_id,))
         user_name = df_user.iloc[0]['user_name'] if not df_user.empty else "Unknown"
         department = df_user.iloc[0]['department'] if not df_user.empty else "Unknown"
         
@@ -186,11 +371,11 @@ def simulate_event(event: EventSimulation):
         # Safely handle unseen labels for transform across all historical data
         unseen_locs = set(df_all['location']) - set(encoders['location'].classes_)
         if unseen_locs:
-            encoders['location'].classes_ = np.append(encoders['location'].classes_, list(unseen_locs))
+            encoders['location'].classes_ = np.sort(np.append(encoders['location'].classes_, list(unseen_locs)))
             
         unseen_devs = set(df_all['device_id']) - set(encoders['device'].classes_)
         if unseen_devs:
-            encoders['device'].classes_ = np.append(encoders['device'].classes_, list(unseen_devs))
+            encoders['device'].classes_ = np.sort(np.append(encoders['device'].classes_, list(unseen_devs)))
             
         df_all['location_encoded'] = encoders['location'].transform(df_all['location'])
         df_all['device_encoded'] = encoders['device'].transform(df_all['device_id'])

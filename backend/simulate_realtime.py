@@ -9,8 +9,11 @@ import requests
 import time
 from datetime import datetime
 import json
+import os
 
 BASE_URL = "http://localhost:8000"
+API_KEY = os.environ.get("UEBA_API_KEY", "dev-local-key")
+HEADERS = {"X-API-Key": API_KEY}
 
 def get_demo_events():
     """
@@ -151,7 +154,7 @@ def run_simulation():
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Sending event {i+1}/{len(events)} for user {event['user_id']}...")
         
         try:
-            res = requests.post(f"{BASE_URL}/simulate-event", json=event)
+            res = requests.post(f"{BASE_URL}/simulate-event", json=event, headers=HEADERS)
             if res.status_code == 200:
                 data = res.json()
                 score = data.get("final_risk_score", 0)
