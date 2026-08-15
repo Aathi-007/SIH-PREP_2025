@@ -13,13 +13,13 @@ import {
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 const API_KEY = import.meta.env.VITE_API_KEY || 'dev-local-key';
 
-export default function UserDetailModal({ userId, onClose, jwt }) {
+export default function UserDetailModal({ userId, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!userId || !jwt) return;
+    if (!userId) return;
 
     let isMounted = true;
     setLoading(true);
@@ -28,8 +28,7 @@ export default function UserDetailModal({ userId, onClose, jwt }) {
       try {
         const response = await fetch(`${API_BASE}/user/${userId}`, {
           headers: { 
-            'X-API-Key': API_KEY,
-            'Authorization': `Bearer ${jwt}`
+            'X-API-Key': API_KEY
           }
         });
         if (!response.ok) {
@@ -56,7 +55,7 @@ export default function UserDetailModal({ userId, onClose, jwt }) {
     return () => {
       isMounted = false;
     };
-  }, [userId, jwt]);
+  }, [userId]);
 
   if (!userId) return null;
 

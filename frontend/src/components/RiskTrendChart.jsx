@@ -1,27 +1,45 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
-  CartesianGrid, Tooltip 
+  CartesianGrid, Tooltip, Legend 
 } from 'recharts';
 import { TrendingUp } from 'lucide-react';
 
-export default function RiskTrendChart({ alerts }) {
-  // Process the alerts for the trend chart
-  // We want to show a chronological trend, so we sort them ascending by flagged_at
-  // We limit to the last 15 alerts to keep the chart clean and readable
-  const trendData = [...alerts]
-    .sort((a, b) => new Date(a.flagged_at) - new Date(b.flagged_at))
-    .slice(-15)
-    .map((alert, index) => ({
-      index: index + 1,
-      user: alert.user_name,
-      score: alert.risk_score,
-      time: new Date(alert.flagged_at).toLocaleTimeString(undefined, {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      })
-    }));
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || 'dev-local-key';
+
+export default function RiskTrendChart() {
+  const [trendData, setTrendData] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    
+    async function fetchTrend() {
+      try {
+        const response = await fetch(`${API_BASE}/analytics/company-behavior-trend`, {
+          headers: { 'X-API-Key': API_KEY }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (isMounted) {
+            setTrendData(data);
+            setLoading(false);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch company behavior trend", err);
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    fetchTrend();
+    const interval = setInterval(fetchTrend, 3000); // refresh every 3 seconds
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   return (
     <div className="dashboard-card trend-card">
@@ -32,9 +50,13 @@ export default function RiskTrendChart({ alerts }) {
         </h2>
       </div>
       <div className="trend-chart-container">
-        {trendData.length === 0 ? (
+        {loading && trendData.length === 0 ? (
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <p style={{ color: '#64748b', fontSize: '13px' }}>Waiting for threat logs...</p>
+            <p style={{ color: '#64748b', fontSize: '13px' }}>Loading trend data...</p>
+          </div>
+        ) : trendData.length === 0 ? (
+          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <p style={{ color: '#64748b', fontSize: '13px' }}>No behavior data found.</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -43,14 +65,18 @@ export default function RiskTrendChart({ alerts }) {
               margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
             >
               <defs>
-                <linearGradient id="colorRisk" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                <linearGradient id="colorNormal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                </linearGradient>
+                <linearGradient id="colorAbnormal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
               <XAxis 
-                dataKey="time" 
+                dataKey="displayDate" 
                 stroke="#64748b" 
                 fontSize={10}
                 tickLine={false}
@@ -59,7 +85,6 @@ export default function RiskTrendChart({ alerts }) {
                 stroke="#64748b" 
                 fontSize={10} 
                 tickLine={false}
-                domain={[50, 100]}
               />
               <Tooltip
                 contentStyle={{
@@ -70,18 +95,28 @@ export default function RiskTrendChart({ alerts }) {
                   fontSize: '12px'
                 }}
                 labelFormatter={(label) => `Time: ${label}`}
-                formatter={(value, name, props) => [
-                  `${value} (User: ${props.payload.user})`, 
-                  'Risk Score'
-                ]}
+              />
+              <Legend 
+                wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }}
+                iconType="circle"
               />
               <Area 
                 type="monotone" 
-                dataKey="score" 
-                stroke="#3b82f6" 
+                name="Normal Behavior"
+                dataKey="normal_events" 
+                stroke="#10b981" 
                 strokeWidth={2}
                 fillOpacity={1} 
-                fill="url(#colorRisk)" 
+                fill="url(#colorNormal)" 
+              />
+              <Area 
+                type="monotone" 
+                name="Abnormal Behavior"
+                dataKey="abnormal_events" 
+                stroke="#f43f5e" 
+                strokeWidth={2}
+                fillOpacity={1} 
+                fill="url(#colorAbnormal)" 
               />
             </AreaChart>
           </ResponsiveContainer>

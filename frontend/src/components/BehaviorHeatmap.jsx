@@ -4,7 +4,7 @@ import { Activity } from 'lucide-react';
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 const API_KEY = import.meta.env.VITE_API_KEY || 'dev-local-key';
 
-export default function BehaviorHeatmap({ jwt, onCellClick }) {
+export default function BehaviorHeatmap({ onCellClick }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -13,13 +13,10 @@ export default function BehaviorHeatmap({ jwt, onCellClick }) {
     let isMounted = true;
 
     async function fetchHeatmap() {
-      if (!jwt) return;
-      
       try {
         const response = await fetch(`${API_BASE}/analytics/daily-risk`, {
           headers: { 
-            'X-API-Key': API_KEY,
-            'Authorization': `Bearer ${jwt}`
+            'X-API-Key': API_KEY
           }
         });
         
@@ -51,7 +48,7 @@ export default function BehaviorHeatmap({ jwt, onCellClick }) {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [jwt]);
+  }, []);
 
   // Generate an array of the last 30 days formatted as 'YYYY-MM-DD'
   const generateLast30Days = () => {

@@ -44,7 +44,7 @@ function CountUp({ value }) {
   return <span>{count}</span>;
 }
 
-export default function SummaryCards({ onFetchError, jwt }) {
+export default function SummaryCards({ onFetchError }) {
   const [summary, setSummary] = useState({
     total_alerts: 0,
     high_risk_count: 0,
@@ -57,12 +57,10 @@ export default function SummaryCards({ onFetchError, jwt }) {
     let isMounted = true;
 
     async function fetchSummary() {
-      if (!jwt) return;
       try {
         const response = await fetch(`${API_BASE}/alerts/summary`, {
           headers: { 
-            'X-API-Key': API_KEY,
-            'Authorization': `Bearer ${jwt}`
+            'X-API-Key': API_KEY
           }
         });
         if (!response.ok) {
@@ -97,7 +95,7 @@ export default function SummaryCards({ onFetchError, jwt }) {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [onFetchError, jwt]);
+  }, [onFetchError]);
 
   if (loading && !summary) {
     return (

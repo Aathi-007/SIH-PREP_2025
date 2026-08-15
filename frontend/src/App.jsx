@@ -1,19 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ShieldAlert, Download, Clock, AlertCircle, LogOut } from 'lucide-react';
+import { ShieldAlert, Download, Clock, AlertCircle } from 'lucide-react';
 import SummaryCards from './components/SummaryCards';
-import LoginPage from './components/LoginPage';
 import BehaviorHeatmap from './components/BehaviorHeatmap';
-import AlertsTable from './components/AlertsTable';
 import UserDetailModal from './components/UserDetailModal';
 import RiskTrendChart from './components/RiskTrendChart';
 import ActivityTimeline from './components/ActivityTimeline';
+import UserDirectory from './components/UserDirectory';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 const API_KEY = import.meta.env.VITE_API_KEY || 'dev-local-key';
 
 export default function App() {
-  const [jwt, setJwt] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -27,12 +25,10 @@ export default function App() {
     let isMounted = true;
 
     async function fetchAlerts() {
-      if (!jwt) return; // Wait until logged in
       try {
         const response = await fetch(`${API_BASE}/alerts`, {
           headers: { 
-            'X-API-Key': API_KEY,
-            'Authorization': `Bearer ${jwt}`
+            'X-API-Key': API_KEY
           }
         });
         if (!response.ok) {
@@ -61,7 +57,7 @@ export default function App() {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [jwt]); // Rerun when jwt changes
+  }, []); // Rerun when mounted
 
   // Update live clock every second
   useEffect(() => {
@@ -83,10 +79,6 @@ export default function App() {
     downloadAnchor.click();
     downloadAnchor.remove();
   };
-
-  if (!jwt) {
-    return <LoginPage onLogin={setJwt} />;
-  }
 
   return (
     <motion.div 
@@ -133,16 +125,6 @@ export default function App() {
             <Download size={14} />
             Export Report
           </button>
-          
-          <button
-            className="export-btn"
-            onClick={() => setJwt(null)}
-            title="Log out"
-            style={{ color: '#f43f5e', borderColor: 'rgba(244, 63, 94, 0.3)', background: 'rgba(244, 63, 94, 0.1)' }}
-          >
-            <LogOut size={14} />
-            Logout
-          </button>
         </div>
       </header>
 
@@ -158,34 +140,27 @@ export default function App() {
       )}
 
       {/* 3. Threat Metrics Summary Card Grid */}
-      <SummaryCards onFetchError={setError} jwt={jwt} />
+      <SummaryCards onFetchError={setError} />
 
       {/* 4. Two-Column SOC Dashboard Grid */}
       <div className="dashboard-grid">
         
         {/* Left / Primary Column (Trend Line and Core Alerts Table) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          <RiskTrendChart alerts={alerts} />
+          <RiskTrendChart />
           
           <BehaviorHeatmap 
-            jwt={jwt} 
             onCellClick={setSelectedUserId} 
-          />
-          
-          <AlertsTable 
-            alerts={alerts}
-            loading={loading}
-            error={error}
-            onRowClick={setSelectedUserId} 
           />
         </div>
 
-        {/* Right / Sidebar Column (Operations timeline feed) */}
-        <div>
+        {/* Right / Sidebar Column (Operations timeline feed & User Directory) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <ActivityTimeline 
             alerts={alerts} 
             onRowClick={setSelectedUserId}
           />
+          <UserDirectory onUserClick={setSelectedUserId} />
         </div>
       </div>
 
@@ -195,7 +170,6 @@ export default function App() {
           <UserDetailModal 
             userId={selectedUserId} 
             onClose={() => setSelectedUserId(null)} 
-            jwt={jwt}
           />
         )}
       </AnimatePresence>
